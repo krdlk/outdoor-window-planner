@@ -193,7 +193,7 @@ body { margin: 0; }
     dog:      { name: "Dog walk",       phrase: "a dog walk",     temp: [40, 75], rain: [25, 70], wind: [15, 30], aqi: [60, 150], uv: [7, 11], daylight: false }
   };
   const WEIGHTS = { temp: 1, rain: 1.5, wind: 1, aqi: 1, uv: 0.5 };
-  const FISH_WEIGHTS = { light: 1.5, pressure: 1, wind: 1, rain: 0.7, temp: 0.5, aqi: 0.3 };
+  const FISH_WEIGHTS = { light: 2.5, pressure: 1.5, wind: 1, rain: 0.5, temp: 0.3, aqi: 0.2 };
   const STORM_CODES = [95, 96, 99]; // thunderstorm weather codes
   const FIRST_HOUR = 6, LAST_HOUR = 22; // windows may run 6 AM to 10 PM
 
@@ -395,7 +395,7 @@ body { margin: 0; }
         '<span class="label">Best ' + state.duration + '-hour window for ' + escapeHtml(ACTIVITIES[state.activity].phrase) + '</span>' +
         '<div class="big">' + dayName + ', ' + fmtRange(a.best.hours[0].hour, state.duration) + '</div>' +
         '<span class="verdict"><i class="dot" style="background:' + b.color + '"></i>' + b.word + ' · <span class="num">' + a.best.score + '</span>/100</span>' +
-        '<p>' + summarize(a.best.hours, p) + '</p>' + extra;
+        '<p>' + summarize(a.best.hours, p, state.data.days[pickDay]) + '</p>' + extra;
       if (!state.selected) state.selected = { dayIdx: pickDay, start: a.best.start };
     }
 
@@ -443,14 +443,18 @@ body { margin: 0; }
     renderFactors(analyses, p);
   }
 
-  function summarize(hours, p) {
+  function summarize(hours, p, day) {
     const avg = k => hours.reduce((a, h) => a + (h[k] || 0), 0) / hours.length;
     const maxv = k => Math.max.apply(null, hours.map(h => h[k] || 0));
     const parts = [];
     if (p.kind === "fish") {
-      const first = hours[0];
-      parts.push(first.why.light);
-      parts.push("pressure " + first.why.pressure.toLowerCase());
+      // Describe the window by its best-lit hour, which is what earns the score.
+      const top = hours.reduce((b, h) => (h.factors.light > b.factors.light ? h : b), hours[0]);
+      const lw = top.why.light;
+      if (/dawn$/.test(lw)) parts.push("Includes dawn (sunrise " + day.sunriseTxt + ")");
+      else if (/dusk$/.test(lw)) parts.push("Includes dusk (sunset " + day.sunsetTxt + ")");
+      else parts.push(lw);
+      parts.push("pressure " + top.why.pressure.toLowerCase());
       parts.push("wind " + Math.round(avg("wind")) + " mph");
       const pop = maxv("pop");
       parts.push(pop <= 10 ? "dry" : pop + "% chance of rain");
@@ -480,7 +484,7 @@ body { margin: 0; }
       const maxv = k => Math.max.apply(null, hours.map(h => h[k] || 0));
       let rows;
       if (p.kind === "fish") {
-        const first = hours[0];
+        const first = hours.reduce((b, h) => (h.factors.light > b.factors.light ? h : b), hours[0]);
         const dp = first.dp;
         rows = [
           ["Light", avgF("light"), first.why.light, "dawn and dusk score highest; clouds help midday"],
