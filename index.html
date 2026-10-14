@@ -185,13 +185,16 @@ body { margin: 0; }
   // ---------- Activities ----------
   // temp: ideal feels-like range in °F. rain/wind/aqi/uv: [fine at or below, unusable at or above].
   const ACTIVITIES = {
-    run:      { name: "Run",            temp: [45, 62], rain: [15, 60], wind: [10, 25], aqi: [50, 120], uv: [6, 10], daylight: true },
-    practice: { name: "Kids' practice", temp: [55, 75], rain: [15, 50], wind: [12, 25], aqi: [50, 150], uv: [6, 9],  daylight: true },
-    fishing:  { name: "Fishing",        temp: [55, 78], rain: [20, 60], wind: [8, 20],  aqi: [50, 150], uv: [7, 11], daylight: false, goldenHour: true },
-    yard:     { name: "Yard work",      temp: [50, 72], rain: [20, 50], wind: [15, 30], aqi: [60, 150], uv: [6, 10], daylight: true },
-    dog:      { name: "Dog walk",       temp: [40, 75], rain: [25, 70], wind: [15, 30], aqi: [60, 150], uv: [7, 11], daylight: false }
+    run:      { name: "Run",            phrase: "a run",          temp: [45, 62], rain: [15, 60], wind: [10, 25], aqi: [50, 120], uv: [6, 10], daylight: true },
+    practice: { name: "Kids' practice", phrase: "kids' practice", temp: [55, 75], rain: [15, 50], wind: [12, 25], aqi: [50, 150], uv: [6, 9],  daylight: true },
+    // Fishing is scored on when fish feed (light, pressure trend, wind), with angler comfort as a minor factor.
+    fishing:  { name: "Fishing",        phrase: "fishing",        temp: [45, 80], rain: [60, 95], wind: [12, 22], aqi: [60, 150], uv: [8, 11], daylight: false, kind: "fish" },
+    yard:     { name: "Yard work",      phrase: "yard work",      temp: [50, 72], rain: [20, 50], wind: [15, 30], aqi: [60, 150], uv: [6, 10], daylight: true },
+    dog:      { name: "Dog walk",       phrase: "a dog walk",     temp: [40, 75], rain: [25, 70], wind: [15, 30], aqi: [60, 150], uv: [7, 11], daylight: false }
   };
   const WEIGHTS = { temp: 1, rain: 1.5, wind: 1, aqi: 1, uv: 0.5 };
+  const FISH_WEIGHTS = { light: 1.5, pressure: 1, wind: 1, rain: 0.7, temp: 0.5, aqi: 0.3 };
+  const STORM_CODES = [95, 96, 99]; // thunderstorm weather codes
   const FIRST_HOUR = 6, LAST_HOUR = 22; // windows may run 6 AM to 10 PM
 
   const state = {
@@ -235,7 +238,53 @@ body { margin: 0; }
     const d = f < range[0] ? range[0] - f : f - range[1];
     return Math.max(0, 1 - d / 15);
   }
+  function geoMean(f, weights) {
+    let logSum = 0, wSum = 0;
+    for (const k in weights) { logSum += weights[k] * Math.log(Math.max(f[k], 0.02)); wSum += weights[k]; }
+    return Math.exp(logSum / wSum) * 100;
+  }
+
+  // Low light is when fish feed most: dawn and dusk are best, overcast helps midday, bright midday is slowest.
+  function lightInfo(h, day) {
+    const mid = h.hour + 0.5;
+    const cloud = h.cloud == null ? 30 : h.cloud;
+    const midday = 0.25 + 0.3 * (cloud / 100);
+    if (day.sunriseH == null) return { v: midday, why: "Daylight" };
+    const dRise = Math.abs(mid - day.sunriseH), dSet = Math.abs(mid - day.sunsetH);
+    const near = Math.min(dRise, dSet);
+    const which = dRise < dSet ? "dawn" : "dusk";
+    if (near <= 1.5) return { v: 1, why: "Low light at " + which };
+    if (mid < day.sunriseH || mid > day.sunsetH) return { v: 0.35, why: "Dark" };
+    if (near <= 3) return { v: 1 - (near - 1.5) / 1.5 * (1 - midday), why: cloud >= 60 ? "Overcast" : "Morning or evening light" };
+    return { v: midday, why: cloud >= 60 ? "Overcast midday" : "Bright midday" };
+  }
+  // Falling pressure ahead of a front tends to trigger feeding; rising pressure after a front tends to slow it.
+  function pressureInfo(h) {
+    if (h.dp == null) return { v: 0.75, why: "No trend data" };
+    const dp = h.dp; // hPa change over the past 3 hours
+    if (dp <= -1.5) return { v: 1, why: "Falling" };
+    if (dp < 1) return { v: 0.75 + (dp > -0.5 ? 0 : 0.25 * (-0.5 - dp)), why: "Steady" };
+    if (dp >= 2) return { v: 0.35, why: "Rising" };
+    return { v: 0.75 - 0.4 * (dp - 1), why: "Rising slightly" };
+  }
+
   function scoreHour(h, p, day) {
+    if (p.kind === "fish") {
+      const light = lightInfo(h, day), pres = pressureInfo(h);
+      const wind = h.wind < 3 ? 0.85 : ramp(h.wind, p.wind[0], p.wind[1]); // a light chop beats glassy water
+      const f = {
+        light: light.v,
+        pressure: pres.v,
+        wind,
+        rain: ramp(h.pop, p.rain[0], p.rain[1]),
+        temp: tempScore(h.feels, p.temp),
+        aqi: ramp(h.aqi, p.aqi[0], p.aqi[1])
+      };
+      let s = geoMean(f, FISH_WEIGHTS);
+      const storm = STORM_CODES.indexOf(h.code) !== -1;
+      if (storm) s = 0;
+      return { score: Math.round(s), factors: f, dark: !h.isDay, why: { light: light.why, pressure: pres.why }, storm };
+    }
     const f = {
       temp: tempScore(h.feels, p.temp),
       rain: ramp(h.pop, p.rain[0], p.rain[1]),
@@ -243,13 +292,7 @@ body { margin: 0; }
       aqi: ramp(h.aqi, p.aqi[0], p.aqi[1]),
       uv: ramp(h.uv, p.uv[0], p.uv[1])
     };
-    let logSum = 0, wSum = 0;
-    for (const k in WEIGHTS) { logSum += WEIGHTS[k] * Math.log(Math.max(f[k], 0.02)); wSum += WEIGHTS[k]; }
-    let s = Math.exp(logSum / wSum) * 100;
-    if (p.goldenHour && day.sunriseH != null) {
-      const near = Math.min(Math.abs(h.hour + 0.5 - day.sunriseH), Math.abs(h.hour + 0.5 - day.sunsetH));
-      if (near <= 1.5) s = Math.min(100, s + 10);
-    }
+    let s = geoMean(f, WEIGHTS);
     if (p.daylight && !h.isDay) s = 0;
     return { score: Math.round(s), factors: f, dark: !h.isDay };
   }
@@ -349,7 +392,7 @@ body { margin: 0; }
         extra = '<p>Better: <strong>' + dayLabel(state.data.days[overall.i].date, overall.i) + ', ' + fmtRange(overall.best.hours[0].hour, state.duration) + '</strong> (' + ob.word.toLowerCase() + ', <span class="num">' + overall.best.score + '</span>).</p>';
       }
       ans.innerHTML =
-        '<span class="label">Best ' + state.duration + '-hour window for a ' + escapeHtml(actName) + '</span>' +
+        '<span class="label">Best ' + state.duration + '-hour window for ' + escapeHtml(ACTIVITIES[state.activity].phrase) + '</span>' +
         '<div class="big">' + dayName + ', ' + fmtRange(a.best.hours[0].hour, state.duration) + '</div>' +
         '<span class="verdict"><i class="dot" style="background:' + b.color + '"></i>' + b.word + ' · <span class="num">' + a.best.score + '</span>/100</span>' +
         '<p>' + summarize(a.best.hours, p) + '</p>' + extra;
@@ -404,6 +447,15 @@ body { margin: 0; }
     const avg = k => hours.reduce((a, h) => a + (h[k] || 0), 0) / hours.length;
     const maxv = k => Math.max.apply(null, hours.map(h => h[k] || 0));
     const parts = [];
+    if (p.kind === "fish") {
+      const first = hours[0];
+      parts.push(first.why.light);
+      parts.push("pressure " + first.why.pressure.toLowerCase());
+      parts.push("wind " + Math.round(avg("wind")) + " mph");
+      const pop = maxv("pop");
+      parts.push(pop <= 10 ? "dry" : pop + "% chance of rain");
+      return parts.join(", ") + ".";
+    }
     parts.push("Feels like " + Math.round(avg("feels")) + "°F");
     const pop = maxv("pop");
     parts.push(pop <= 10 ? "dry" : pop + "% chance of rain");
@@ -426,13 +478,26 @@ body { margin: 0; }
       const avgF = k => hours.reduce((a, h) => a + h.factors[k], 0) / hours.length;
       const avg = k => hours.reduce((a, h) => a + (h[k] || 0), 0) / hours.length;
       const maxv = k => Math.max.apply(null, hours.map(h => h[k] || 0));
-      const rows = [
-        ["Feels like", avgF("temp"), Math.round(avg("feels")) + "°F", "ideal " + p.temp[0] + "–" + p.temp[1] + "°F"],
-        ["Rain chance", avgF("rain"), Math.round(maxv("pop")) + "%", "limit " + p.rain[1] + "%"],
-        ["Wind", avgF("wind"), Math.round(avg("wind")) + " mph", "limit " + p.wind[1] + " mph"],
-        ["Air quality", avgF("aqi"), "AQI " + Math.round(maxv("aqi")), "US AQI"],
-        ["UV index", avgF("uv"), (Math.round(maxv("uv") * 10) / 10).toString(), "peak"]
-      ];
+      let rows;
+      if (p.kind === "fish") {
+        const first = hours[0];
+        const dp = first.dp;
+        rows = [
+          ["Light", avgF("light"), first.why.light, "dawn and dusk score highest; clouds help midday"],
+          ["Pressure", avgF("pressure"), first.why.pressure + (dp == null ? "" : " " + (dp > 0 ? "+" : "") + dp.toFixed(1)), "change over the past 3 hours, hPa"],
+          ["Wind", avgF("wind"), Math.round(avg("wind")) + " mph", "a light chop is best"],
+          ["Rain chance", avgF("rain"), Math.round(maxv("pop")) + "%", "light rain is fine"],
+          ["Comfort", avgF("temp"), Math.round(avg("feels")) + "°F", "feels-like for you"]
+        ];
+      } else {
+        rows = [
+          ["Feels like", avgF("temp"), Math.round(avg("feels")) + "°F", "ideal " + p.temp[0] + "–" + p.temp[1] + "°F"],
+          ["Rain chance", avgF("rain"), Math.round(maxv("pop")) + "%", "limit " + p.rain[1] + "%"],
+          ["Wind", avgF("wind"), Math.round(avg("wind")) + " mph", "limit " + p.wind[1] + " mph"],
+          ["Air quality", avgF("aqi"), "AQI " + Math.round(maxv("aqi")), "US AQI"],
+          ["UV index", avgF("uv"), (Math.round(maxv("uv") * 10) / 10).toString(), "peak"]
+        ];
+      }
       rows.forEach(r => {
         const pct = Math.round(r[1] * 100);
         const b = band(pct);
@@ -440,6 +505,12 @@ body { margin: 0; }
       });
       const dark = hours.filter(h => h.dark).length;
       const day = state.data.days[sel.dayIdx];
+      if (p.kind === "fish") {
+        const storms = hours.filter(h => h.storm).length;
+        html += '<p class="hint">Sunrise ' + day.sunriseTxt + ', sunset ' + day.sunsetTxt + '.' +
+          (storms ? ' Thunderstorms are forecast in this window, which rules it out.' : '') +
+          ' Water temperature matters most for many species but isn\'t included; there\'s no free data for lakes and ponds.</p>';
+      } else
       html += '<p class="hint">Daylight ' + day.sunriseTxt + '–' + day.sunsetTxt + (dark ? ". " + dark + " of these hours " + (dark === 1 ? "is" : "are") + " after dark" + (p.daylight ? ", which rules them out for this activity." : ".") : ".") + '</p>';
     }
     html += renderSliders(p);
@@ -502,7 +573,8 @@ body { margin: 0; }
   async function fetchLive(loc) {
     const base = "latitude=" + loc.lat + "&longitude=" + loc.lon + "&timezone=auto&forecast_days=3";
     const wxUrl = "https://api.open-meteo.com/v1/forecast?" + base +
-      "&hourly=apparent_temperature,precipitation_probability,wind_speed_10m,uv_index,is_day&daily=sunrise,sunset" +
+      "&hourly=apparent_temperature,precipitation_probability,wind_speed_10m,uv_index,is_day,cloud_cover,pressure_msl,weather_code&daily=sunrise,sunset" +
+      "&past_hours=3" +
       "&temperature_unit=fahrenheit&wind_speed_unit=mph";
     const aqUrl = "https://air-quality-api.open-meteo.com/v1/air-quality?" + base + "&hourly=us_aqi";
     const [wx, aq] = await withTimeout(Promise.all([
@@ -512,15 +584,21 @@ body { margin: 0; }
     const aqMap = {};
     if (aq && aq.hourly) aq.hourly.time.forEach((t, i) => { aqMap[t] = aq.hourly.us_aqi[i]; });
     const byDate = {};
-    wx.hourly.time.forEach((t, i) => {
+    const H = wx.hourly;
+    H.time.forEach((t, i) => {
       const date = t.slice(0, 10);
+      const p = H.pressure_msl ? H.pressure_msl[i] : null;
+      const p3 = H.pressure_msl && i >= 3 ? H.pressure_msl[i - 3] : null;
       (byDate[date] = byDate[date] || []).push({
         hour: hourOf(t),
-        feels: wx.hourly.apparent_temperature[i],
-        pop: wx.hourly.precipitation_probability[i] ?? 0,
-        wind: wx.hourly.wind_speed_10m[i],
-        uv: wx.hourly.uv_index[i] ?? 0,
-        isDay: wx.hourly.is_day[i] === 1,
+        feels: H.apparent_temperature[i],
+        pop: H.precipitation_probability[i] ?? 0,
+        wind: H.wind_speed_10m[i],
+        uv: H.uv_index[i] ?? 0,
+        isDay: H.is_day[i] === 1,
+        cloud: H.cloud_cover ? H.cloud_cover[i] : null,
+        code: H.weather_code ? H.weather_code[i] : null,
+        dp: (p != null && p3 != null) ? Math.round((p - p3) * 10) / 10 : null,
         aqi: aqMap[t] ?? null
       });
     });
@@ -541,6 +619,12 @@ body { margin: 0; }
     const offset = -new Date().getTimezoneOffset() * 60;
     const start = new Date(Date.now() + offset * 1000);
     const days = [];
+    // Sample pressure (hPa): steady, then falling ahead of the rain, then rising behind it.
+    const pres = t => {
+      if (t <= 14) return 1018;
+      if (t <= 40) return 1018 - (t - 14) * 0.38;
+      return Math.min(1023, 1008.1 + (t - 40) * 0.7);
+    };
     for (let d = 0; d < 3; d++) {
       const dt = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + d));
       const date = dt.toISOString().slice(0, 10);
@@ -559,7 +643,11 @@ body { margin: 0; }
         }
         const isDay = h + 0.5 > sunriseH && h + 0.5 < sunsetH;
         uv = isDay ? Math.max(0, 3.6 * Math.sin(((h - 7) / 11) * Math.PI)) * (d === 1 ? 0.4 : 1) : 0;
-        hours.push({ hour: h, feels: Math.round(feels), pop: Math.round(pop), wind: Math.round(wind), uv: Math.round(uv * 10) / 10, isDay, aqi: Math.round(aqi) });
+        const t = d * 24 + h;
+        const cloud = d === 0 ? 20 : d === 1 ? (h >= 9 ? 85 : 50) : 10;
+        const code = d === 1 && pop >= 75 ? 61 : (cloud >= 60 ? 3 : 1);
+        hours.push({ hour: h, feels: Math.round(feels), pop: Math.round(pop), wind: Math.round(wind), uv: Math.round(uv * 10) / 10, isDay, aqi: Math.round(aqi),
+          cloud, code, dp: Math.round((pres(t) - pres(t - 3)) * 10) / 10 });
       }
       const toTxt = x => { const h = Math.floor(x), m = Math.round((x - h) * 60); return (((h + 11) % 12) + 1) + ":" + String(m).padStart(2, "0") + (h < 12 ? " AM" : " PM"); };
       days.push({ date, hours, sunriseH, sunsetH, sunriseTxt: toTxt(sunriseH), sunsetTxt: toTxt(sunsetH) });
