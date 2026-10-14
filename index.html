@@ -1,0 +1,616 @@
+<title>Outdoor Window Planner</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: one narrow column — answer first, then a day-by-day hour strip, then the factors behind the pick. */
+:root {
+  --bg: #f3f6f5;
+  --surface: #ffffff;
+  --fg: #16302b;
+  --muted: #5b716c;
+  --line: #d6e0dd;
+  --accent: #1f6f5c;
+  --accent-ink: #ffffff;
+  --great: #2f9e6e;
+  --good: #8cc56a;
+  --fair: #e7c45a;
+  --poor: #c9d3d0;
+  --dark: #9aa8a5;
+  --pick: #16302b;
+  --sample-bg: #fff3d6;
+  --sample-fg: #6b4a00;
+  --font-display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1a18; --surface: #162421; --fg: #e3ece9; --muted: #93a8a3; --line: #2a3b37;
+    --accent: #5cc4a3; --accent-ink: #0f1a18; --great: #3fbf87; --good: #8ccf6a; --fair: #d9b74e;
+    --poor: #34433f; --dark: #22302d; --pick: #e3ece9; --sample-bg: #3a2f12; --sample-fg: #f2d68a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1a18; --surface: #162421; --fg: #e3ece9; --muted: #93a8a3; --line: #2a3b37;
+  --accent: #5cc4a3; --accent-ink: #0f1a18; --great: #3fbf87; --good: #8ccf6a; --fair: #d9b74e;
+  --poor: #34433f; --dark: #22302d; --pick: #e3ece9; --sample-bg: #3a2f12; --sample-fg: #f2d68a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+.wrap { max-width: 640px; margin: 0 auto; display: grid; gap: 20px; }
+h1, h2 { font-family: var(--font-display); font-weight: 700; text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: 1.75rem; line-height: 1.15; }
+h2 { font-size: 1.05rem; }
+.label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 700; }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+
+header { display: grid; gap: 10px; }
+.loc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.loc-name { font-weight: 700; }
+.status { font-size: 0.8rem; padding: 3px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); }
+.status.sample { background: var(--sample-bg); color: var(--sample-fg); border-color: transparent; font-weight: 700; }
+.search { position: relative; display: flex; gap: 8px; }
+.search input { flex: 1; min-width: 0; font: inherit; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+.search input:disabled { opacity: 0.6; }
+.results { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 5; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.results button { display: block; width: 100%; text-align: left; font: inherit; padding: 10px 12px; border: 0; background: none; color: var(--fg); cursor: pointer; }
+.results button:hover, .results button:focus-visible { background: var(--bg); }
+.hint { font-size: 0.85rem; color: var(--muted); margin: 0; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font: inherit; font-size: 0.95rem; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+.chip:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.controls { display: grid; gap: 10px; }
+.dur { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.dur .chip { padding: 5px 12px; font-size: 0.9rem; }
+
+.answer { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; display: grid; gap: 8px; }
+.answer .big { font-family: var(--font-display); font-size: 2rem; line-height: 1.1; font-weight: 700; }
+.verdict { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+.dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex: none; }
+.answer p { margin: 0; }
+
+.days { display: grid; gap: 14px; }
+.day { display: grid; gap: 6px; }
+.day-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.day-head .best { font-size: 0.9rem; color: var(--muted); }
+.strip-wrap { overflow-x: auto; }
+.strip { display: grid; grid-template-columns: repeat(var(--n), minmax(18px, 1fr)); gap: 3px; }
+.cell { height: 34px; border-radius: 5px; border: 0; padding: 0; cursor: pointer; position: relative; background: var(--poor); }
+.cell.past { opacity: 0.35; cursor: default; }
+.cell.in-pick::after { content: ""; position: absolute; left: 0; right: 0; bottom: -7px; height: 3px; border-radius: 2px; background: var(--pick); }
+.cell.selected { outline: 2px solid var(--pick); outline-offset: 1px; }
+.ticks { display: grid; grid-template-columns: repeat(var(--n), minmax(18px, 1fr)); gap: 3px; margin-top: 8px; font-size: 0.7rem; color: var(--muted); }
+.ticks span { text-align: left; white-space: nowrap; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.8rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend .dot { border-radius: 3px; }
+
+.factors { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px 18px; display: grid; gap: 12px; }
+.frow { display: grid; grid-template-columns: 7.5rem 1fr auto; align-items: center; gap: 10px; }
+.frow .name { font-size: 0.9rem; }
+.bar { height: 8px; border-radius: 4px; background: var(--poor); overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: 4px; }
+.frow .val { font-size: 0.85rem; text-align: right; min-width: 5.5rem; }
+
+details { border-top: 1px solid var(--line); padding-top: 12px; }
+summary { cursor: pointer; font-weight: 700; }
+.sliders { display: grid; gap: 14px; margin-top: 12px; }
+.slider { display: grid; gap: 4px; }
+.slider label { display: flex; justify-content: space-between; font-size: 0.9rem; gap: 8px; }
+.slider input { width: 100%; accent-color: var(--accent); }
+.reset { justify-self: start; font: inherit; font-size: 0.85rem; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: none; color: var(--fg); cursor: pointer; }
+footer { font-size: 0.8rem; color: var(--muted); }
+footer a { color: var(--accent); }
+@media (max-width: 420px) {
+  .frow { grid-template-columns: 6rem 1fr auto; }
+  .answer .big { font-size: 1.7rem; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bar i { transition: width 0.25s ease; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>When should I get outside?</h1>
+    <div class="loc-row">
+      <span class="loc-name" id="locName">Maplewood, NJ</span>
+      <span class="status" id="status">Loading forecast…</span>
+    </div>
+    <div class="search">
+      <input id="locSearch" type="search" placeholder="Search a town or city" autocomplete="off" aria-label="Search a town or city">
+      <div class="results" id="results" hidden></div>
+    </div>
+    <p class="hint" id="modeHint" hidden></p>
+  </header>
+
+  <section class="controls" aria-label="Activity">
+    <div class="chips" id="activities" role="group" aria-label="Activity"></div>
+    <div class="dur">
+      <span class="label">How long</span>
+      <div class="chips" id="durations" role="group" aria-label="Duration"></div>
+    </div>
+  </section>
+
+  <section class="answer" id="answer" aria-live="polite"></section>
+
+  <section class="days" id="days" aria-label="Hour-by-hour scores"></section>
+
+  <div class="legend" aria-hidden="true">
+    <span><i class="dot" style="background:var(--great)"></i>Great</span>
+    <span><i class="dot" style="background:var(--good)"></i>Good</span>
+    <span><i class="dot" style="background:var(--fair)"></i>Fair</span>
+    <span><i class="dot" style="background:var(--poor)"></i>Poor</span>
+    <span><i class="dot" style="background:var(--dark)"></i>After dark</span>
+  </div>
+
+  <section class="factors" id="factors" aria-live="polite"></section>
+
+  <footer id="footer">
+    Weather and air quality from <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (free for non-commercial use). Scores weigh feels-like temperature, rain chance, wind, US AQI, UV and daylight against the ideal for each activity.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Activities ----------
+  // temp: ideal feels-like range in °F. rain/wind/aqi/uv: [fine at or below, unusable at or above].
+  const ACTIVITIES = {
+    run:      { name: "Run",            temp: [45, 62], rain: [15, 60], wind: [10, 25], aqi: [50, 120], uv: [6, 10], daylight: true },
+    practice: { name: "Kids' practice", temp: [55, 75], rain: [15, 50], wind: [12, 25], aqi: [50, 150], uv: [6, 9],  daylight: true },
+    fishing:  { name: "Fishing",        temp: [55, 78], rain: [20, 60], wind: [8, 20],  aqi: [50, 150], uv: [7, 11], daylight: false, goldenHour: true },
+    yard:     { name: "Yard work",      temp: [50, 72], rain: [20, 50], wind: [15, 30], aqi: [60, 150], uv: [6, 10], daylight: true },
+    dog:      { name: "Dog walk",       temp: [40, 75], rain: [25, 70], wind: [15, 30], aqi: [60, 150], uv: [7, 11], daylight: false }
+  };
+  const WEIGHTS = { temp: 1, rain: 1.5, wind: 1, aqi: 1, uv: 0.5 };
+  const FIRST_HOUR = 6, LAST_HOUR = 22; // windows may run 6 AM to 10 PM
+
+  const state = {
+    activity: "run",
+    duration: 2,
+    loc: { name: "Maplewood, NJ", lat: 40.7312, lon: -74.2735 },
+    data: null,      // { days: [{date, hours: [...] , sunrise, sunset}], offset, live, updated }
+    selected: null,  // { dayIdx, start }
+    overrides: {}
+  };
+
+  // ---------- Storage (per-viewer convenience only) ----------
+  function load(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch (e) { return fallback; } }
+  function save(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) {} }
+  state.overrides = load("owp.overrides", {});
+  state.activity = load("owp.activity", "run");
+  if (!ACTIVITIES[state.activity]) state.activity = "run";
+  state.duration = load("owp.duration", 2);
+  const savedLoc = load("owp.loc", null);
+  if (savedLoc && typeof savedLoc.lat === "number") state.loc = savedLoc;
+
+  function prefs() {
+    const base = ACTIVITIES[state.activity];
+    const o = state.overrides[state.activity] || {};
+    return Object.assign({}, base, {
+      temp: o.temp || base.temp,
+      rain: o.rain || base.rain,
+      wind: o.wind || base.wind
+    });
+  }
+
+  // ---------- Scoring ----------
+  function ramp(v, good, bad) {
+    if (v == null || isNaN(v)) return 1;
+    if (v <= good) return 1;
+    if (v >= bad) return 0;
+    return 1 - (v - good) / (bad - good);
+  }
+  function tempScore(f, range) {
+    if (f >= range[0] && f <= range[1]) return 1;
+    const d = f < range[0] ? range[0] - f : f - range[1];
+    return Math.max(0, 1 - d / 15);
+  }
+  function scoreHour(h, p, day) {
+    const f = {
+      temp: tempScore(h.feels, p.temp),
+      rain: ramp(h.pop, p.rain[0], p.rain[1]),
+      wind: ramp(h.wind, p.wind[0], p.wind[1]),
+      aqi: ramp(h.aqi, p.aqi[0], p.aqi[1]),
+      uv: ramp(h.uv, p.uv[0], p.uv[1])
+    };
+    let logSum = 0, wSum = 0;
+    for (const k in WEIGHTS) { logSum += WEIGHTS[k] * Math.log(Math.max(f[k], 0.02)); wSum += WEIGHTS[k]; }
+    let s = Math.exp(logSum / wSum) * 100;
+    if (p.goldenHour && day.sunriseH != null) {
+      const near = Math.min(Math.abs(h.hour + 0.5 - day.sunriseH), Math.abs(h.hour + 0.5 - day.sunsetH));
+      if (near <= 1.5) s = Math.min(100, s + 10);
+    }
+    if (p.daylight && !h.isDay) s = 0;
+    return { score: Math.round(s), factors: f, dark: !h.isDay };
+  }
+  function band(s) {
+    if (s >= 80) return { word: "Great", color: "var(--great)" };
+    if (s >= 60) return { word: "Good", color: "var(--good)" };
+    if (s >= 40) return { word: "Fair", color: "var(--fair)" };
+    return { word: "Poor", color: "var(--poor)" };
+  }
+
+  function nowWall() {
+    const off = state.data ? state.data.offset : -new Date().getTimezoneOffset() * 60;
+    const d = new Date(Date.now() + off * 1000);
+    return { date: d.toISOString().slice(0, 10), hour: d.getUTCHours() };
+  }
+  function isPast(date, hour) {
+    const n = nowWall();
+    return date < n.date || (date === n.date && hour < n.hour);
+  }
+
+  function analyzeDay(day, p) {
+    const hours = day.hours.filter(h => h.hour >= FIRST_HOUR && h.hour < LAST_HOUR);
+    const scored = hours.map(h => Object.assign({}, h, scoreHour(h, p, day), { past: isPast(day.date, h.hour) }));
+    let best = null;
+    for (let i = 0; i + state.duration <= scored.length; i++) {
+      const slice = scored.slice(i, i + state.duration);
+      if (slice.some(x => x.past)) continue;
+      if (slice[slice.length - 1].hour - slice[0].hour !== state.duration - 1) continue;
+      const avg = slice.reduce((a, x) => a + x.score, 0) / slice.length;
+      const worst = Math.min.apply(null, slice.map(x => x.score));
+      const val = Math.min(avg, worst + 15); // one bad hour drags the window down
+      if (!best || val > best.score + 0.5) best = { start: i, score: Math.round(val), hours: slice };
+    }
+    return { scored, best };
+  }
+
+  // ---------- Formatting ----------
+  function fmtHour(h) {
+    const hh = ((h + 11) % 12) + 1;
+    return hh + (h < 12 || h === 24 ? " AM" : " PM");
+  }
+  function fmtRange(start, dur) { return fmtHour(start) + "–" + fmtHour(start + dur); }
+  function dayLabel(date, i) {
+    if (i === 0 && date === nowWall().date) return "Today";
+    const [y, m, d] = date.split("-").map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    const wd = dt.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+    return i === 1 && dayLabel(state.data.days[0].date, 0) === "Today" ? "Tomorrow" : wd;
+  }
+
+  // ---------- Rendering ----------
+  const $ = id => document.getElementById(id);
+
+  function renderControls() {
+    const act = $("activities");
+    act.innerHTML = "";
+    Object.keys(ACTIVITIES).forEach(k => {
+      const b = document.createElement("button");
+      b.className = "chip"; b.type = "button"; b.id = "act-" + k;
+      b.textContent = ACTIVITIES[k].name;
+      b.setAttribute("aria-pressed", String(k === state.activity));
+      b.addEventListener("click", () => { state.activity = k; state.selected = null; save("owp.activity", k); renderControls(); render(); });
+      act.appendChild(b);
+    });
+    const dur = $("durations");
+    dur.innerHTML = "";
+    [1, 2, 3].forEach(n => {
+      const b = document.createElement("button");
+      b.className = "chip"; b.type = "button"; b.id = "dur-" + n;
+      b.textContent = n + (n === 1 ? " hour" : " hours");
+      b.setAttribute("aria-pressed", String(n === state.duration));
+      b.addEventListener("click", () => { state.duration = n; state.selected = null; save("owp.duration", n); renderControls(); render(); });
+      dur.appendChild(b);
+    });
+  }
+
+  function render() {
+    if (!state.data) return;
+    const p = prefs();
+    const analyses = state.data.days.map(d => analyzeDay(d, p));
+    const actName = ACTIVITIES[state.activity].name.toLowerCase();
+
+    // Answer: today's best if any remain, else the best of the coming days
+    const ans = $("answer");
+    let pickDay = analyses.findIndex(a => a.best);
+    let overall = null;
+    analyses.forEach((a, i) => { if (a.best && (!overall || a.best.score > overall.best.score + 5)) overall = { i, best: a.best }; });
+    if (pickDay === -1) {
+      ans.innerHTML = '<span class="label">Best window</span><div class="big">Nothing left in this forecast</div><p>Try a shorter window or loosen the limits below.</p>';
+    } else {
+      const a = analyses[pickDay];
+      const b = band(a.best.score);
+      const dayName = dayLabel(state.data.days[pickDay].date, pickDay);
+      let extra = "";
+      if (overall && overall.i !== pickDay) {
+        const ob = band(overall.best.score);
+        extra = '<p>Better: <strong>' + dayLabel(state.data.days[overall.i].date, overall.i) + ', ' + fmtRange(overall.best.hours[0].hour, state.duration) + '</strong> (' + ob.word.toLowerCase() + ', <span class="num">' + overall.best.score + '</span>).</p>';
+      }
+      ans.innerHTML =
+        '<span class="label">Best ' + state.duration + '-hour window for a ' + escapeHtml(actName) + '</span>' +
+        '<div class="big">' + dayName + ', ' + fmtRange(a.best.hours[0].hour, state.duration) + '</div>' +
+        '<span class="verdict"><i class="dot" style="background:' + b.color + '"></i>' + b.word + ' · <span class="num">' + a.best.score + '</span>/100</span>' +
+        '<p>' + summarize(a.best.hours, p) + '</p>' + extra;
+      if (!state.selected) state.selected = { dayIdx: pickDay, start: a.best.start };
+    }
+
+    // Day strips
+    const daysEl = $("days");
+    daysEl.innerHTML = "";
+    analyses.forEach((a, di) => {
+      const day = state.data.days[di];
+      const wrap = document.createElement("div");
+      wrap.className = "day";
+      const bestTxt = a.best ? "Best " + fmtRange(a.best.hours[0].hour, state.duration) + " · " + band(a.best.score).word : "No open window";
+      wrap.innerHTML = '<div class="day-head"><h2>' + dayLabel(day.date, di) + '</h2><span class="best">' + bestTxt + '</span></div>';
+      const sw = document.createElement("div"); sw.className = "strip-wrap";
+      const strip = document.createElement("div"); strip.className = "strip";
+      strip.style.setProperty("--n", a.scored.length);
+      const ticks = document.createElement("div"); ticks.className = "ticks";
+      ticks.style.setProperty("--n", a.scored.length);
+      a.scored.forEach((h, hi) => {
+        const c = document.createElement("button");
+        c.type = "button"; c.className = "cell";
+        const b = band(h.score);
+        c.style.background = (h.dark && h.score === 0) ? "var(--dark)" : b.color;
+        if (h.past) c.classList.add("past");
+        if (a.best && hi >= a.best.start && hi < a.best.start + state.duration) c.classList.add("in-pick");
+        if (state.selected && state.selected.dayIdx === di && hi >= state.selected.start && hi < state.selected.start + state.duration) c.classList.add("selected");
+        c.setAttribute("aria-label", dayLabel(day.date, di) + " " + fmtHour(h.hour) + ": " + (h.dark && h.score === 0 ? "after dark" : b.word + ", " + h.score));
+        c.title = fmtHour(h.hour) + " · " + h.score;
+        if (!h.past) {
+          c.addEventListener("click", () => {
+            const start = Math.min(hi, a.scored.length - state.duration);
+            state.selected = { dayIdx: di, start: Math.max(0, start) };
+            render();
+          });
+        } else { c.disabled = true; }
+        strip.appendChild(c);
+        const t = document.createElement("span");
+        t.textContent = (h.hour % 3 === 0) ? fmtHour(h.hour).replace(" ", "").toLowerCase().replace("m", "") : "";
+        ticks.appendChild(t);
+      });
+      sw.appendChild(strip); sw.appendChild(ticks);
+      wrap.appendChild(sw);
+      daysEl.appendChild(wrap);
+    });
+
+    renderFactors(analyses, p);
+  }
+
+  function summarize(hours, p) {
+    const avg = k => hours.reduce((a, h) => a + (h[k] || 0), 0) / hours.length;
+    const maxv = k => Math.max.apply(null, hours.map(h => h[k] || 0));
+    const parts = [];
+    parts.push("Feels like " + Math.round(avg("feels")) + "°F");
+    const pop = maxv("pop");
+    parts.push(pop <= 10 ? "dry" : pop + "% chance of rain");
+    parts.push("wind " + Math.round(avg("wind")) + " mph");
+    const aqi = maxv("aqi");
+    parts.push(aqi <= 50 ? "clean air" : "AQI " + Math.round(aqi));
+    return parts.join(", ") + ".";
+  }
+
+  function renderFactors(analyses, p) {
+    const el = $("factors");
+    const sel = state.selected;
+    let hours = null, title = "";
+    if (sel && analyses[sel.dayIdx]) {
+      hours = analyses[sel.dayIdx].scored.slice(sel.start, sel.start + state.duration);
+      if (hours.length) title = dayLabel(state.data.days[sel.dayIdx].date, sel.dayIdx) + ", " + fmtRange(hours[0].hour, hours.length);
+    }
+    let html = '<div><span class="label">What goes into the score</span><h2>' + (title || "Tap an hour above") + '</h2></div>';
+    if (hours && hours.length) {
+      const avgF = k => hours.reduce((a, h) => a + h.factors[k], 0) / hours.length;
+      const avg = k => hours.reduce((a, h) => a + (h[k] || 0), 0) / hours.length;
+      const maxv = k => Math.max.apply(null, hours.map(h => h[k] || 0));
+      const rows = [
+        ["Feels like", avgF("temp"), Math.round(avg("feels")) + "°F", "ideal " + p.temp[0] + "–" + p.temp[1] + "°F"],
+        ["Rain chance", avgF("rain"), Math.round(maxv("pop")) + "%", "limit " + p.rain[1] + "%"],
+        ["Wind", avgF("wind"), Math.round(avg("wind")) + " mph", "limit " + p.wind[1] + " mph"],
+        ["Air quality", avgF("aqi"), "AQI " + Math.round(maxv("aqi")), "US AQI"],
+        ["UV index", avgF("uv"), (Math.round(maxv("uv") * 10) / 10).toString(), "peak"]
+      ];
+      rows.forEach(r => {
+        const pct = Math.round(r[1] * 100);
+        const b = band(pct);
+        html += '<div class="frow"><span class="name">' + r[0] + '</span><div class="bar" title="' + r[3] + '"><i style="width:' + Math.max(pct, 3) + '%;background:' + b.color + '"></i></div><span class="val num">' + r[2] + '</span></div>';
+      });
+      const dark = hours.filter(h => h.dark).length;
+      const day = state.data.days[sel.dayIdx];
+      html += '<p class="hint">Daylight ' + day.sunriseTxt + '–' + day.sunsetTxt + (dark ? ". " + dark + " of these hours " + (dark === 1 ? "is" : "are") + " after dark" + (p.daylight ? ", which rules them out for this activity." : ".") : ".") + '</p>';
+    }
+    html += renderSliders(p);
+    el.innerHTML = html;
+    wireSliders();
+  }
+
+  function renderSliders(p) {
+    const open = load("owp.limitsOpen", false);
+    return '<details id="limits"' + (open ? " open" : "") + '><summary>Adjust limits for ' + escapeHtml(ACTIVITIES[state.activity].name.toLowerCase()) + '</summary><div class="sliders">' +
+      slider("tLo", "Coolest ideal feels-like", p.temp[0], 20, 80, "°F") +
+      slider("tHi", "Warmest ideal feels-like", p.temp[1], 40, 95, "°F") +
+      slider("rain", "Rain chance that rules it out", p.rain[1], 20, 100, "%") +
+      slider("wind", "Wind that rules it out", p.wind[1], 10, 45, " mph") +
+      '<button type="button" class="reset" id="resetLimits">Reset to defaults</button></div></details>';
+  }
+  function slider(id, label, val, min, max, unit) {
+    return '<div class="slider"><label for="sl-' + id + '"><span>' + label + '</span><span class="num" id="sv-' + id + '">' + val + unit + '</span></label><input type="range" id="sl-' + id + '" min="' + min + '" max="' + max + '" value="' + val + '" data-unit="' + unit + '"></div>';
+  }
+  function wireSliders() {
+    const det = $("limits");
+    if (det) det.addEventListener("toggle", () => save("owp.limitsOpen", det.open));
+    ["tLo", "tHi", "rain", "wind"].forEach(id => {
+      const s = $("sl-" + id);
+      if (!s) return;
+      s.addEventListener("input", () => { $("sv-" + id).textContent = s.value + s.dataset.unit; });
+      s.addEventListener("change", () => {
+        const base = ACTIVITIES[state.activity];
+        const o = Object.assign({}, state.overrides[state.activity] || {});
+        let lo = +$("sl-tLo").value, hi = +$("sl-tHi").value;
+        if (lo > hi - 5) { if (id === "tLo") hi = lo + 5; else lo = hi - 5; }
+        o.temp = [lo, hi];
+        const rainBad = +$("sl-rain").value;
+        o.rain = [Math.min(base.rain[0], rainBad - 5), rainBad];
+        const windBad = +$("sl-wind").value;
+        o.wind = [Math.min(base.wind[0], windBad - 3), windBad];
+        state.overrides[state.activity] = o;
+        save("owp.overrides", state.overrides);
+        state.selected = null;
+        render();
+      });
+    });
+    const r = $("resetLimits");
+    if (r) r.addEventListener("click", () => { delete state.overrides[state.activity]; save("owp.overrides", state.overrides); state.selected = null; render(); });
+  }
+
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+  // ---------- Data: live (Open-Meteo) ----------
+  function withTimeout(promise, ms) {
+    return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+  }
+  function hourOf(iso) { return +iso.slice(11, 13); }
+  function hoursFromIso(iso) { return +iso.slice(11, 13) + (+iso.slice(14, 16)) / 60; }
+  function timeTxt(iso) {
+    const h = +iso.slice(11, 13), m = iso.slice(14, 16);
+    return (((h + 11) % 12) + 1) + ":" + m + (h < 12 ? " AM" : " PM");
+  }
+
+  async function fetchLive(loc) {
+    const base = "latitude=" + loc.lat + "&longitude=" + loc.lon + "&timezone=auto&forecast_days=3";
+    const wxUrl = "https://api.open-meteo.com/v1/forecast?" + base +
+      "&hourly=apparent_temperature,precipitation_probability,wind_speed_10m,uv_index,is_day&daily=sunrise,sunset" +
+      "&temperature_unit=fahrenheit&wind_speed_unit=mph";
+    const aqUrl = "https://air-quality-api.open-meteo.com/v1/air-quality?" + base + "&hourly=us_aqi";
+    const [wx, aq] = await withTimeout(Promise.all([
+      fetch(wxUrl).then(r => { if (!r.ok) throw new Error("forecast " + r.status); return r.json(); }),
+      fetch(aqUrl).then(r => r.ok ? r.json() : null).catch(() => null)
+    ]), 8000);
+    const aqMap = {};
+    if (aq && aq.hourly) aq.hourly.time.forEach((t, i) => { aqMap[t] = aq.hourly.us_aqi[i]; });
+    const byDate = {};
+    wx.hourly.time.forEach((t, i) => {
+      const date = t.slice(0, 10);
+      (byDate[date] = byDate[date] || []).push({
+        hour: hourOf(t),
+        feels: wx.hourly.apparent_temperature[i],
+        pop: wx.hourly.precipitation_probability[i] ?? 0,
+        wind: wx.hourly.wind_speed_10m[i],
+        uv: wx.hourly.uv_index[i] ?? 0,
+        isDay: wx.hourly.is_day[i] === 1,
+        aqi: aqMap[t] ?? null
+      });
+    });
+    const days = wx.daily.time.map((date, i) => ({
+      date,
+      hours: byDate[date] || [],
+      sunriseH: hoursFromIso(wx.daily.sunrise[i]),
+      sunsetH: hoursFromIso(wx.daily.sunset[i]),
+      sunriseTxt: timeTxt(wx.daily.sunrise[i]),
+      sunsetTxt: timeTxt(wx.daily.sunset[i])
+    }));
+    return { days, offset: wx.utc_offset_seconds, live: true, aq: !!aq, updated: new Date() };
+  }
+
+  // ---------- Data: sample (used when live data can't be reached) ----------
+  // An invented, plausible mid-October pattern: clear day, then afternoon rain, then a cool, windy day.
+  function buildSample() {
+    const offset = -new Date().getTimezoneOffset() * 60;
+    const start = new Date(Date.now() + offset * 1000);
+    const days = [];
+    for (let d = 0; d < 3; d++) {
+      const dt = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + d));
+      const date = dt.toISOString().slice(0, 10);
+      const sunriseH = 7.22 + d * 0.017, sunsetH = 18.27 - d * 0.03;
+      const hours = [];
+      for (let h = 0; h < 24; h++) {
+        const diurnal = Math.sin(((h - 9) / 24) * 2 * Math.PI); // peaks mid-afternoon
+        let feels, pop, wind, aqi, uv;
+        if (d === 0) {
+          feels = 54 + 12 * diurnal; pop = 5; wind = 6 + 4 * Math.max(0, diurnal); aqi = 30 + 12 * Math.max(0, diurnal);
+        } else if (d === 1) {
+          feels = 58 + 6 * diurnal; pop = (h >= 13 && h <= 19) ? 75 + (h % 3) * 5 : (h >= 11 && h < 13 ? 35 : 10);
+          wind = 10 + 5 * Math.max(0, diurnal); aqi = 20;
+        } else {
+          feels = 49 + 8 * diurnal - (h >= 10 && h <= 17 ? 3 : 0); pop = 5; wind = 15 + 7 * Math.max(0, diurnal); aqi = 16;
+        }
+        const isDay = h + 0.5 > sunriseH && h + 0.5 < sunsetH;
+        uv = isDay ? Math.max(0, 3.6 * Math.sin(((h - 7) / 11) * Math.PI)) * (d === 1 ? 0.4 : 1) : 0;
+        hours.push({ hour: h, feels: Math.round(feels), pop: Math.round(pop), wind: Math.round(wind), uv: Math.round(uv * 10) / 10, isDay, aqi: Math.round(aqi) });
+      }
+      const toTxt = x => { const h = Math.floor(x), m = Math.round((x - h) * 60); return (((h + 11) % 12) + 1) + ":" + String(m).padStart(2, "0") + (h < 12 ? " AM" : " PM"); };
+      days.push({ date, hours, sunriseH, sunsetH, sunriseTxt: toTxt(sunriseH), sunsetTxt: toTxt(sunsetH) });
+    }
+    return { days, offset, live: false, aq: true, updated: new Date() };
+  }
+
+  async function loadData() {
+    $("status").textContent = "Loading forecast…";
+    $("status").className = "status";
+    try {
+      state.data = await fetchLive(state.loc);
+      const t = state.data.updated.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      $("status").textContent = "Live · updated " + t + (state.data.aq ? "" : " · no air-quality data");
+      $("locSearch").disabled = false;
+      $("modeHint").hidden = true;
+    } catch (e) {
+      state.data = buildSample();
+      $("status").textContent = "Sample forecast · not real weather";
+      $("status").className = "status sample";
+      $("locSearch").disabled = true;
+      $("locSearch").placeholder = "Search works with live data";
+      $("modeHint").hidden = false;
+      $("modeHint").textContent = "Live weather couldn't be reached from here, so this shows an invented sample forecast to demonstrate the planner. Open the file directly in a browser to use real forecasts for any town.";
+    }
+    $("locName").textContent = state.loc.name;
+    state.selected = null;
+    render();
+  }
+
+  // ---------- Location search (live mode) ----------
+  let searchTimer = null;
+  $("locSearch").addEventListener("input", e => {
+    clearTimeout(searchTimer);
+    const q = e.target.value.trim();
+    const res = $("results");
+    if (q.length < 2) { res.hidden = true; return; }
+    searchTimer = setTimeout(async () => {
+      try {
+        const r = await withTimeout(fetch("https://geocoding-api.open-meteo.com/v1/search?count=5&language=en&name=" + encodeURIComponent(q)), 6000);
+        const j = await r.json();
+        res.innerHTML = "";
+        (j.results || []).forEach(p => {
+          const b = document.createElement("button");
+          b.type = "button";
+          const label = p.name + (p.admin1 ? ", " + p.admin1 : "") + (p.country_code && p.country_code !== "US" ? ", " + p.country : "");
+          b.textContent = label;
+          b.addEventListener("click", () => {
+            state.loc = { name: label, lat: p.latitude, lon: p.longitude };
+            save("owp.loc", state.loc);
+            res.hidden = true; $("locSearch").value = "";
+            loadData();
+          });
+          res.appendChild(b);
+        });
+        if (!res.children.length) res.innerHTML = '<button type="button" disabled>No matches</button>';
+        res.hidden = false;
+      } catch (err) {
+        res.innerHTML = '<button type="button" disabled>Search isn\'t reachable right now</button>';
+        res.hidden = false;
+      }
+    }, 300);
+  });
+  document.addEventListener("click", e => { if (!e.target.closest(".search")) $("results").hidden = true; });
+
+  renderControls();
+  loadData();
+})();
+</script>
